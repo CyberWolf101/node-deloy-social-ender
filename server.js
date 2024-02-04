@@ -82,7 +82,7 @@ io.on("connection", (socket) => {
 io.on("error", (error) => {
     console.error('Socket.io error:', error);
 });
-app.get('/pls', async(req,res)=>{
+app.get('/pls', async (req, res) => {
     res.json('plesaaa')
 })
 app.post("/chats/send-message", upload.array('files'), async (req, res) => {
@@ -164,7 +164,7 @@ app.use("/moments", momentsRouter);
 app.use("/comments", commentsRouter);
 app.use("/chats", chatsRouter);
 app.use("/posts", postsRouter);
-app.use("/user", userRouter);
+app.use("/user",cors(), userRouter);
 
 mongoose.connect(process.env.DATAURI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => {
