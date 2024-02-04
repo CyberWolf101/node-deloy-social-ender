@@ -140,7 +140,7 @@ app.post("/chats/send-message", upload.array('files'), async (req, res) => {
         );
 
         // console.log('userSocketIdMap', userSocketIdMap);
-        // console.log('receiverId', receiverId);
+        // console.log('receiverIbbd', receiverId);
 
         const receiverSocketId = userSocketIdMap[receiverId];
         // // console.log('receiverSocketId', receiverSocketId);
