@@ -1,526 +1,177 @@
-const User = require('../models/userModel')
-const bcrypt = require("bcrypt")
-// const jwt = require("jsonwebtoken")              //this package(npm install jsonwebtoken) will help us generate tokens.A token is what tells the frontend if a user is authenticated or not so we can do something with that info
-const Fuse = require('fuse.js');
-const multer = require('multer');
+const express = require("express");
+const app = express();
+const cors = require("cors");
+const mongoose = require("mongoose");
+const userRouter = require('./Routes/user');
+const sandBoxRouter = require('./Routes/sandBox');
+const momentsRouter = require('./Routes/moments');
+const channelsRouter = require('./Routes/channel');
+const postsRouter = require('./Routes/posts');
+const commentsRouter = require('./Routes/comment');
+const chatsRouter = require('./Routes/chats');
+require("dotenv").config();
+const http = require("http");
+// const socketIO = require("socket.io");
+const Chat = require("./models/chatModel");
+const { Server } = require('socket.io')
+app.use(cors());
+app.set("view engine", "ejs");
+app.use(express.static("public"));
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const multer = require('multer');
 
-const createToken = (id) => {                   // we are creating a function so we can reuse it elsewhere(ie login_user controller and signup user contoller). we take in an argument id cus we will grab it from the req body when we call the fuction and and a user is assigned an id(we just called it id here)
-    // return jwt.sign({ _id: id }, process.env.SECRET, { expiresIn: "3d" })    //.sign is a method of jsonwebtoken used to create and asign a token. we pass in 3 arguments. first is the id to identify a user, second is a secret string that will be only known to the server and we put that in an env file. third argument can be an option and we use the expiresIn option that is to say it will expire in 3days
+// might delete
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// might delete
 
-    console.log(id)
-}                                                                         // and we need to return it so when we call it, it will return a token for us
+app.use(express.json());
+app.use("/user",cors(), userRouter);
 
-const storage = new CloudinaryStorage({
-    cloudinary: cloudinary,
-    params: {
-        folder: 'profile-pictures', // Optional: Organize images into folders
-        allowed_formats: ['jpg', 'png', 'jpeg'], // Optional: Specify allowed file formats
-        // You can add more Cloudinary options as needed
-    },
+cloudinary.config({
+    cloud_name: 'dfdnuay65',
+    api_key: '845648699234787',
+    api_secret: '9MzfyKj2021VjQuzqEuunAsk19o',
 });
-const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } });
+const Storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, './uploads'),
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+});
+const upload = multer({
+    storage: Storage
+})
 
-
-//sign-up user
-const singnup_user = async (req, res) => {
-    const { email,
-        password,
-        sex,
-        bio,
-        joined,
-        dpUrl,
-        firstName,
-        userName,
-        lastName,
-        notifications,
-        balance,
-        likes,
-        followers,
-    } = req.body
-
-    try {
-        const user = await User.signup(email, password, sex, bio, joined, dpUrl, firstName, userName, lastName, notifications)
-        // const token = createToken(user._id)
-        const token = user._id
-        res.status(200).json({ email, token, user })
-    } catch (error) {
-        return res.status(400).json({ error: error.message })
+// Create HTTP server after setting up middleware
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: '*',
+        methods: ["GET", "POST"],
     }
-}
+});
 
+// User Socket ID Map
+const userSocketIdMap = {};
 
-//login user
-const login_user = async (req, res) => {
-    const { email, password } = req.body
+// Set up a connection event for Socket.io
+io.on("connection", (socket) => {
+    // console.log("A user connected");
+    // console.log(socket.id);
 
+    // Assuming you have access to the userId during connection
+    const userId = socket.handshake.query.userId;
+    // Connect the user and update userSocketIdMap
+    userSocketIdMap[userId] = socket.id;
+    // console.log(`User connected with socket ID: ${socket.id}, User ID: ${userId}`);
+    // console.log(userSocketIdMap)
+
+    socket.on("newMessage", (chat) => {
+        // Get the receiver's socket ID from userSocketIdMap
+        const receiverSocketId = userSocketIdMap[chat.receiverId];
+        // console.log('Received newMessage event:', chat);
+
+        // Emit the message to the receiver's socket
+        socket.to(receiverSocketId).emit('recieve_message', chat);
+    })
+
+    // Handle disconnection events
+    socket.on('disconnect', () => {
+        // console.log(`User disconnected with User ID: ${userId}`);
+        delete userSocketIdMap[userId];
+    });
+});
+
+io.on("error", (error) => {
+    console.error('Socket.io error:', error);
+});
+app.get('/pls', async (req, res) => {
+    res.json('plesaaa')
+})
+app.post("/chats/send-message", upload.array('files'), async (req, res) => {
     try {
-        const user = await User.login(email, password)    //the user we returned is stored here so we have assces to it
+        const { senderId, receiverId, text, senderUserName, receiverUserName, dpUrl } = req.body;
+        const files = req.files;
 
-        const token = user._id              //when we get a user we create a token and we store that inside the token const
-        // const token = createToken(user._id)              //when we get a user we create a token and we store that inside the token const
-        res.status(200).json({ email, token, user })
-    } catch (error) {
-        return res.status(400).json({ error: error.message })
-    }
-
-
-
-}
-//Edit bio
-const edit_details = async (req, res) => {
-    const userName = req.body.userName;
-    const firstName = req.body.firstName;
-    const lastName = req.body.lastName;
-
-    try {
-        const user = await User.findById(req.params.id);
-        if (!user) {
-            return res.status(404).json({ error: "User not found" });
+        console.log(files)
+        console.log(senderId)
+        // Validate required fields
+        if (!senderId || !receiverId || !senderUserName || !receiverUserName) {
+            return res.status(400).json({ error: 'Missing required fields' });
         }
 
-        user.userName = userName;
-        user.firstName = firstName;
-        user.lastName = lastName;
-
-        await user.save();
-        res.status(200).send("Details updated");
-    } catch (error) {
-        return res.status(400).json({ error: error.message });
-    }
-};
-
-
-
-const edit_bio = async (req, res) => {
-    const currentBio = req.body.bio; // Update to req.body.bio to match the client's request body structure
-
-    try {
-        const user = await User.findById(req.params.id);
-        if (!user) {
-            return res.status(404).json({ error: "User not found" });
-        }
-
-        user.bio = currentBio;
-        await user.save(); // Use await here to properly handle the asynchronous save operation
-        res.status(200).send("Bio updated");
-    } catch (error) {
-        return res.status(400).json({ error: error.message });
-    }
-};
-
-
-
-
-
-const getAllUsers = async (req, res) => {
-    try {
-        const users = await User.find();
-        res.json(users);
-    } catch (error) {
-        console.error('Error fetching users:', error);
-        res.status(500).json({ error: 'Error fetching users' });
-    }
-};
-
-
-const searchUsers = async (req, res) => {
-    const { query } = req.params;
-
-    try {
-        const users = await User.find({
-            $or: [
-                { firstName: { $regex: query, $options: 'i' } },
-                { lastName: { $regex: query, $options: 'i' } },
-                { userName: { $regex: query, $options: 'i' } },
-                { email: { $regex: query, $options: 'i' } },
-            ],
-        });
-
-        res.json(users);
-    } catch (error) {
-        console.error('Error searching users:', error);
-        res.status(500).json({ error: 'Error searching users' });
-    }
-};
-
-
-// const uploadProfilePicture = async (req, res) => {
-//     const { userId } = req.params;
-//     const { profilePicture } = req.body;
-
-//     try {
-//         // Check if the user exists
-//         const user = await User.findById(userId);
-//         if (!user) {
-//             return res.status(404).json({ error: 'User not found' });
-//         }
-
-//         // Upload the new profile picture to Cloudinary
-//         const cloudinaryResponse = await cloudinary.uploader.upload(profilePicture, {
-//             overwrite: true, // Overwrite the existing image with the same public ID
-//             folder: 'profile-pictures', // Optional: Organize images into folders
-//             public_id: `user_${userId}_profile_picture`
-//         });
-
-//         // Update the user's profile picture URL in the database
-//         user.dpUrl = cloudinaryResponse.secure_url;
-//         await user.save();
-
-//         res.status(200).json({ success: 'Profile picture updated successfully', imageUrl: cloudinaryResponse.secure_url });
-//     } catch (error) {
-//         console.error('Error updating profile picture:', error);
-//         res.status(500).json({ error: 'Internal server error' });
-//     }
-// };
-
-const uploadProfilePicture = async (req, res) => {
-    const { userId } = req.params;
-
-    try {
-        // Check if the user exists
-        const user = await User.findById(userId);
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        // Check if a file is included in the request
-        if (!req.file) {
-            return res.status(400).json({ error: 'No file uploaded' });
-        }
-
-        // Upload the file to Cloudinar
-        const cloudinaryResponse = await cloudinary.uploader.upload(req.file.path, {
-            folder: 'profile-pictures', // Optional: Organize images into folders
-            // You can add more Cloudinary options as needed
-        });
-
-        // Update the user's profile picture URL in the database
-        user.dpUrl = cloudinaryResponse.secure_url;
-        await user.save();
-
-        // Send a response with the updated image URL
-        res.status(200).json({ success: 'Profile picture updated successfully', imageUrl: cloudinaryResponse.secure_url });
-    } catch (error) {
-        console.error('Error updating profile picture:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-
-
-
-const toggleUserFollow = async (req, res) => {
-    const { userId } = req.params;
-    const { followerId } = req.body;
-
-    try {
-        // Find the user being followed
-        const userToFollow = await User.findById(userId);
-        if (!userToFollow) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        // Find the follower user
-        const followerUser = await User.findById(followerId);
-        if (!followerUser) {
-            return res.status(404).json({ error: 'Follower user not found' });
-        }
-
-        // Check if the follower is already following the user
-        const isFollowing = userToFollow.followers.some((follower) => follower.userId === followerId);
-
-        if (isFollowing) {
-            // If following, remove the follower from userToFollow's followers and userToFollow from followerUser's following
-            userToFollow.followers = userToFollow.followers.filter((follower) => follower.userId !== followerId);
-            followerUser.following = followerUser.following.filter((following) => following.userId !== userId);
-        } else {
-            // If not following, add the follower to userToFollow's followers and userToFollow to followerUser's following
-            const followerInfo = {
-                userId: followerUser._id.toString(),
-                userName: followerUser.userName,
-                userDpUrl: followerUser.dpUrl,
-            };
-
-            userToFollow.followers.push(followerInfo);
-            followerUser.following.push({
-                userId: userToFollow._id.toString(),
-                userName: userToFollow.userName,
-                userDpUrl: userToFollow.dpUrl,
+        let mediaUrls = [];
+        if (files && files.length > 0 && files !== null) {
+            // Upload each file to Cloudinary concurrently
+            const uploadPromises = files.map(async (file) => {
+                return await cloudinary.uploader.upload(file.path, {
+                    resource_type: 'auto',
+                });
             });
+
+
+            const uploadResults = await Promise.all(uploadPromises);
+            mediaUrls = uploadResults.map((result) => result.secure_url);
         }
-
-        // Save the updated users
-        await userToFollow.save();
-        await followerUser.save();
-        // Fetch details of all the users that the followerUser is following
-        const followedUser = await User.findById(userId);
-        console.log('help', followedUser)
-
-        res.status(200).json({
-            user: followedUser,
-            userToFollow,
-            followerUser,
-        });
-    } catch (error) {
-        console.error('Error toggling user follow:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-
-
-
-
-const getSingleUser = async (req, res) => {
-    try {
-        // Extract the userId from the request parameters
-        const userId = req.params.userId;
-
-        // Query the database to find the user by ID
-        const user = await User.findById(userId);
-
-        // Check if the user exists
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        // If the user exists, send it as a JSON response
-        res.status(200).json(user);
-    } catch (error) {
-        // Handle errors
-        console.error('Error fetching user:', error);
-        res.status(500).json({ error: 'Error fetching user' });
-    }
-};
-
-const getFollowingUsers = async (req, res) => {
-    const { userId } = req.params;
-
-    try {
-        const user = await User.findById(userId);
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        const followingUsers = await User.find({ _id: { $in: user.following.map(f => f.userId) } });
-
-        res.status(200).json({
-            user: user,
-            followingUsers: followingUsers,
-        });
-    } catch (error) {
-        console.error('Error fetching following users:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-
-
-const makeDepo = async (req, res) => {
-    const { userId } = req.params;
-    const { amount, type } = req.body;
-
-    try {
-        const user = await User.findById(userId);
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        let transactions;
-        const newTrans = { amount: amount, time: Date.now(), type: type };
-
-        let newBalance;
-        if (user.balance) {
-            newBalance = Number(amount) + Number(user.balance)
-            transactions = [newTrans, ...user.transactions]; // Corrected line
-        } else {
-            newBalance = amount;
-            transactions = [newTrans];
-        }
-
-        // Update user's balance without using $set
-        const updatedUser = await User.findOneAndUpdate(
-            { _id: userId },
-            { balance: newBalance, transactions },
-            { new: true } // This option returns the updated document
-        );
-
-        res.status(200).json({ success: true, user: updatedUser });
-    } catch (error) {
-        console.error('Error updating user balance:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-const Makewithdrawal = async (req, res) => {
-    const { userId } = req.params;
-    const { amount, type } = req.body;
-
-    try {
-        const user = await User.findById(userId);
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        let transactions;
-        const newTrans = { amount: amount, time: Date.now(), type: type };
-
-        let newBalance;
-        newBalance = Number(user.balance) - Number(amount)
-        transactions = [newTrans, ...user.transactions];
-
-
-        // Update user's balance without using $set
-        const updatedUser = await User.findOneAndUpdate(
-            { _id: userId },
-            { balance: newBalance, transactions },
-            { new: true } // This option returns the updated document
-        );
-
-        res.status(200).json({ success: true, user: updatedUser });
-    } catch (error) {
-        console.error('Error updating user balance:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-
-
-const TransfserFunds = async (req, res) => {
-    const { senderId, receiverId } = req.params;
-    const { amount } = req.body;
-
-    try {
-        const sender = await User.findById(senderId);
-        const receiver = await User.findById(receiverId);
-        if (!sender || !receiver) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        // Sender logic
-        const newTransForSender = { amount: amount, time: Date.now(), type: 'Debit' };
-        const newBalanceForSender = Number(sender.balance) - Number(amount)
-        const transactions = [newTransForSender, ...sender.transactions];
-
-
-        // Reciever logic
-        const newTransForReceiver = { amount: amount, time: Date.now(), type: 'Transfer' };
-        let newBalanceForReceiver
-        let transactionsForReceiver
-        if (receiver.balance) {
-            newBalanceForReceiver = Number(receiver.balance) + Number(amount)
-            transactionsForReceiver = [newTransForReceiver, ...receiver.transactions];
-        } else {
-            newBalanceForReceiver = Number(amount)
-            transactionsForReceiver = [newTransForReceiver]
-        }
-
-
-
-        // Update user's balance without using $set
-        const updatedSender = await User.findOneAndUpdate(
-            { _id: senderId },
-            { balance: newBalanceForSender, transactions },
-            { new: true } // This option returns the updated document
-        );
-        const updatedReceiver = await User.findOneAndUpdate(
-            { _id: receiverId },
+        // Check for an existing chat document in either direction
+        const chat = await Chat.findOneAndUpdate(
             {
-                balance: newBalanceForReceiver,
-                transactions: transactionsForReceiver
+                $or: [
+                    { 'users.senderId': senderId, 'users.receiverId': receiverId },
+                    { 'users.senderId': receiverId, 'users.receiverId': senderId },
+                ],
             },
-            { new: true } // This option returns the updated document
+            {
+                $push: {
+                    messages: {
+                        senderId,
+                        receiverId,
+                        senderUserName,
+                        receiverUserName,
+                        text,
+                        dpUrl,
+                        mediaUrls
+                    },
+                },
+                'users.senderId': senderId,
+                'users.senderName': senderUserName,
+                'users.receiverId': receiverId,
+                'users.receiverName': receiverUserName,
+            },
+            { upsert: true, new: true }
         );
 
-        res.status(200).json({ success: true, user: updatedSender });
+        // console.log('userSocketIdMap', userSocketIdMap);
+        // console.log('receiverId', receiverId);
+
+        const receiverSocketId = userSocketIdMap[receiverId];
+        // // console.log('receiverSocketId', receiverSocketId);
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('recieve_message', chat);
+        } else {
+            console.error('Receiver socket ID is undefined. Cannot emit message.');
+        }
+
+        // Return the updated chat document
+        res.status(200).json({ chat });
+
     } catch (error) {
-        console.error('Error updating user balance:', error);
+        console.error('Error sending message:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
-};
+});
 
 
+app.use("/channels", channelsRouter);
+app.use("/moments", momentsRouter);
+app.use("/comments", commentsRouter);
+app.use("/chats", chatsRouter);
+app.use("/posts", postsRouter);
 
-async function getAllUsersForSearch() {
-    try {
-        const users = await User.find();
-        return users;
-    } catch (error) {
-        console.error('Error fetching products:', error);
-        return [];
-    }
-}
-
-let fuse;
-
-async function initializeFuse() {
-    try {
-        const allUsers = await getAllUsersForSearch();
-
-        const fuseOptions = {
-            keys: ['userName', 'email', 'firstName', 'lastName'],
-            threshold: 0.6, // Adjust as needed
-        };
-
-        fuse = new Fuse(allUsers, fuseOptions);
-    } catch (error) {
-        console.error('Error initializing Fuse:', error);
-    }
-}
-
-// Initialize the Fuse instance
-initializeFuse();
-
-
-const searchedUsers = async (req, res) => {
-
-    const { query } = req.params;
-
-    // Ensure Fuse is initialized before proceeding
-    if (!fuse) {
-        await initializeFuse();
-    }
-
-    // Perform searches without duplicates
-    const fuzzyResults = fuse.search(query);
-
-    res.json({ results: fuzzyResults });
-};
-
-
-
-module.exports = {
-    singnup_user, login_user,
-    edit_bio, getAllUsers, searchUsers,
-    uploadProfilePicture, edit_details, toggleUserFollow,
-    getSingleUser, getFollowingUsers, makeDepo,
-    Makewithdrawal, searchedUsers, TransfserFunds
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//this is the method we go with if we didn't want to use the the custom method
-// const singnup_user = async (req, res) => {
-//     const { email, password } = req.body            //grabbing email and password from the request body
-//     const exist = await User.findOne({ email })
-//     if (exist) {
-//         return res.status(400).send("already in use")  //we return this so it will not continue with the rest of the code and break
-//     }
-//     const salt = await bcrypt.genSalt(10)
-//     const hash = await bcrypt.hash(password, salt)
-//     try {
-//         const user = await User.create({ email, password: hash })
-//         res.status(200).json({ email, user })
-//     } catch (error) {
-//         res.status(400).json({ error: error.message })
-//     }
-// }
+mongoose.connect(process.env.DATAURI, { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => {
+        server.listen(process.env.PORT, () => {
+            console.log("Database connected & server listening on port", process.env.PORT + "...");
+            // Export userSocketIdMap and io only after successful database connection and server start
+        });
+    }).catch((err) => {
+        console.log(err.message);
+    });
