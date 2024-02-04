@@ -82,7 +82,9 @@ io.on("connection", (socket) => {
 io.on("error", (error) => {
     console.error('Socket.io error:', error);
 });
-
+app.get('/pls', async(req,res)=>{
+    res.json('plesaaa')
+})
 app.post("/chats/send-message", upload.array('files'), async (req, res) => {
     try {
         const { senderId, receiverId, text, senderUserName, receiverUserName, dpUrl } = req.body;
